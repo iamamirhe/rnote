@@ -1,18 +1,15 @@
 mod smoothoptions;
 
-use kurbo::Shape;
 // Re-exports
 pub use smoothoptions::SmoothOptions;
 
+// Imports
 use super::Composer;
 use crate::helpers::Vector2Helpers;
-use crate::penpath::{self, Segment};
-use crate::shapes::Ellipse;
-use crate::shapes::Line;
-use crate::shapes::QuadraticBezier;
-use crate::shapes::Rectangle;
-use crate::shapes::ShapeBehaviour;
-use crate::shapes::{Arrow, CubicBezier};
+use crate::penpath::Segment;
+use crate::shapes::{
+    cubbez, quadbez, Arrow, CubicBezier, Ellipse, Line, QuadraticBezier, Rectangle, ShapeBehaviour,
+};
 use crate::PenPath;
 
 use p2d::bounding_volume::{Aabb, BoundingVolume};
@@ -151,98 +148,82 @@ impl Composer<SmoothOptions> for PenPath {
     fn draw_composed(&self, cx: &mut impl piet::RenderContext, options: &SmoothOptions) {
         cx.save().unwrap();
 
+        let start_point = (
+            self.start.pos,
+            options
+                .pressure_curve
+                .apply(options.stroke_width, self.start.pressure),
+        );
+        let mut path_points = vec![start_point];
+
         let mut prev = self.start;
         for seg in self.segments.iter() {
-            let bez_path = {
-                match seg {
-                    Segment::LineTo { end } => {
-                        let (width_start, width_end) = (
-                            options
-                                .pressure_curve
-                                .apply(options.stroke_width, prev.pressure),
-                            options
-                                .pressure_curve
-                                .apply(options.stroke_width, end.pressure),
-                        );
+            match seg {
+                Segment::LineTo { end } => {
+                    let width_end = options
+                        .pressure_curve
+                        .apply(options.stroke_width, end.pressure);
 
-                        let bez_path = compose_lines_variable_width(
-                            &[Line {
-                                start: prev.pos,
-                                end: end.pos,
-                            }],
-                            width_start,
-                            width_end,
-                            options,
-                        );
-
-                        prev = *end;
-                        bez_path
-                    }
-                    Segment::QuadBezTo { cp, end } => {
-                        let (width_start, width_end) = (
-                            options
-                                .pressure_curve
-                                .apply(options.stroke_width, prev.pressure),
-                            options
-                                .pressure_curve
-                                .apply(options.stroke_width, end.pressure),
-                        );
-
-                        let quadbez = QuadraticBezier {
-                            start: prev.pos,
-                            cp: *cp,
-                            end: end.pos,
-                        };
-                        let n_splits = penpath::no_subsegments_for_segment_len(
-                            quadbez.to_kurbo().perimeter(0.25),
-                        )
-                        .max(2);
-                        let lines = quadbez.approx_with_lines(n_splits);
-                        let bez_path =
-                            compose_lines_variable_width(&lines, width_start, width_end, options);
-
-                        prev = *end;
-                        bez_path
-                    }
-                    Segment::CubBezTo { cp1, cp2, end } => {
-                        let (width_start, width_end) = (
-                            options
-                                .pressure_curve
-                                .apply(options.stroke_width, prev.pressure),
-                            options
-                                .pressure_curve
-                                .apply(options.stroke_width, end.pressure),
-                        );
-
-                        let cubbez = CubicBezier {
-                            start: prev.pos,
-                            cp1: *cp1,
-                            cp2: *cp2,
-                            end: end.pos,
-                        };
-                        let n_splits = penpath::no_subsegments_for_segment_len(
-                            cubbez.to_kurbo().perimeter(0.25),
-                        )
-                        .max(2);
-                        let lines = cubbez.approx_with_lines(n_splits);
-                        let bez_path =
-                            compose_lines_variable_width(&lines, width_start, width_end, options);
-
-                        prev = *end;
-                        bez_path
-                    }
+                    path_points.append(&mut vec![(end.pos, width_end)]);
+                    prev = *end;
                 }
-            };
+                Segment::QuadBezTo { cp, end } => {
+                    let (width_start, width_end) = (
+                        options
+                            .pressure_curve
+                            .apply(options.stroke_width, prev.pressure),
+                        options
+                            .pressure_curve
+                            .apply(options.stroke_width, end.pressure),
+                    );
 
-            if let Some(fill_color) = options.stroke_color {
-                // Outlines for debugging
-                //let stroke_brush = cx.solid_brush(piet::Color::RED);
-                //cx.stroke(bez_path.clone(), &stroke_brush, 0.2);
+                    let n_splits = 5;
 
-                let fill_brush = cx.solid_brush(fill_color.into());
-                cx.fill(bez_path, &fill_brush);
+                    let mut quadbez_points = (1..n_splits)
+                        .map(|i| {
+                            let t = f64::from(i) / f64::from(n_splits);
+
+                            (
+                                quadbez::quadbez_calc(prev.pos, *cp, end.pos, t),
+                                width_start + (width_end - width_start) * t,
+                            )
+                        })
+                        .collect::<Vec<(na::Vector2<f64>, f64)>>();
+
+                    path_points.append(&mut quadbez_points);
+                    prev = *end;
+                }
+                Segment::CubBezTo { cp1, cp2, end } => {
+                    let (width_start, width_end) = (
+                        options
+                            .pressure_curve
+                            .apply(options.stroke_width, prev.pressure),
+                        options
+                            .pressure_curve
+                            .apply(options.stroke_width, end.pressure),
+                    );
+
+                    let n_splits = 5;
+
+                    let mut cubbez_points = (1..n_splits)
+                        .map(|i| {
+                            let t = f64::from(i) / f64::from(n_splits);
+
+                            (
+                                cubbez::cubbez_calc(prev.pos, *cp1, *cp2, end.pos, t),
+                                width_start + (width_end - width_start) * t,
+                            )
+                        })
+                        .collect::<Vec<(na::Vector2<f64>, f64)>>();
+
+                    path_points.append(&mut cubbez_points);
+                    prev = *end;
+                }
             }
         }
+
+        //debug_points(cx, &points_var_width);
+        draw_path_variable_width(cx, &path_points, options);
 
         cx.restore().unwrap();
     }
@@ -272,96 +253,131 @@ impl Composer<SmoothOptions> for crate::Shape {
     }
 }
 
-// Composes lines with variable width. Must be drawn with only a fill
-fn compose_lines_variable_width(
-    lines: &[Line],
-    start_width: f64,
-    end_width: f64,
-    _options: &SmoothOptions,
-) -> kurbo::BezPath {
-    // The the lines variable is ghosted here, to make sure we can only use the filtered
-    let lines = lines
-        .iter()
-        .filter(|line| (line.end - line.start).magnitude() > 0.0)
-        .collect::<Vec<&Line>>();
-    let n_lines = lines.len();
-    if n_lines == 0 {
-        return kurbo::BezPath::new();
-    }
-
-    let (pos_offset_coords, neg_offset_coords): (Vec<_>, Vec<_>) = lines
-        .iter()
-        .enumerate()
-        .flat_map(|(i, line)| {
-            let line_start_width = start_width
-                + (end_width - start_width) * (f64::from(i as i32) / f64::from(n_lines as u32));
-            let line_end_width = start_width
-                + (end_width - start_width) * (f64::from(i as i32 + 1) / f64::from(n_lines as u32));
-
-            let dir_orth_unit = (line.end - line.start).orth_unit();
-
-            [
-                (
-                    line.start + dir_orth_unit * line_start_width * 0.5,
-                    line.start - dir_orth_unit * line_start_width * 0.5,
-                ),
-                (
-                    line.end + dir_orth_unit * line_end_width * 0.5,
-                    line.end - dir_orth_unit * line_end_width * 0.5,
-                ),
-            ]
-        })
-        .unzip();
-
-    let first_line = lines.first().unwrap();
-    let last_line = lines.last().unwrap();
-    let start_dir_unit = (first_line.end - first_line.start).normalize();
-    let end_dir_unit = (last_line.end - last_line.start).normalize();
-    let start_pos_offset_coord = pos_offset_coords.first().unwrap().to_owned();
-    let end_pos_offset_coord = pos_offset_coords.last().unwrap().to_owned();
-    let start_neg_offset_coord = neg_offset_coords.first().unwrap().to_owned();
-    let end_neg_offset_coord = neg_offset_coords.last().unwrap().to_owned();
-
+// draws a path with variable width.
+fn draw_path_variable_width(
+    cx: &mut impl piet::RenderContext,
+    path_points: &[(na::Vector2<f64>, f64)],
+    options: &SmoothOptions,
+) {
+    let n_points = path_points.len();
     let mut bez_path = kurbo::BezPath::new();
 
-    // Start cap
-    if start_width > 0.0 && start_pos_offset_coord != start_neg_offset_coord {
-        bez_path.move_to(start_neg_offset_coord.to_kurbo_point());
-        bez_path.curve_to(
-            (start_neg_offset_coord - start_dir_unit * start_width * (2.0 / 3.0)).to_kurbo_point(),
-            (start_pos_offset_coord - start_dir_unit * start_width * (2.0 / 3.0)).to_kurbo_point(),
-            start_pos_offset_coord.to_kurbo_point(),
-        );
-    } else {
-        bez_path.move_to(start_pos_offset_coord.to_kurbo_point());
+    if n_points < 2 {
+        return;
     }
+
+    let Some(color) = options.stroke_color else {
+        return;
+    };
+    let fill_brush = cx.solid_brush(color.into());
+
+    let first_point = *path_points.first().unwrap();
+    let second_point = *path_points.get(1).unwrap();
+    let last_point = *path_points.last().unwrap();
+
+    let start_unit_norm = (second_point.0 - first_point.0).orth_unit();
+
+    let mut pos_offset_coords = Vec::with_capacity(n_points);
+    let mut neg_offset_coords = Vec::with_capacity(n_points);
+
+    pos_offset_coords.push(first_point.0 + start_unit_norm * first_point.1 * 0.5);
+    neg_offset_coords.push(first_point.0 - start_unit_norm * first_point.1 * 0.5);
+
+    let mut points_iter = path_points.into_iter();
+    let mut prev = *points_iter.next().unwrap();
+    for point in points_iter {
+        let direction_unit_norm = (point.0 - prev.0).orth_unit();
+
+        pos_offset_coords.push(point.0 + direction_unit_norm * point.1 * 0.5);
+        neg_offset_coords.push(point.0 - direction_unit_norm * point.1 * 0.5);
+
+        prev = *point;
+    }
+
+    let start_arc_radius = first_point.1 * 0.5;
+    let end_arc_radius = last_point.1 * 0.5;
+
+    // Start cap
+    let start_cap = kurbo::Ellipse::new(
+        first_point.0.to_kurbo_point(),
+        kurbo::Vec2::new(start_arc_radius, start_arc_radius),
+        0.0,
+    );
+
+    let mut pos_offset_coords_iter = pos_offset_coords.into_iter();
+    let neg_offset_coords_iter = neg_offset_coords.into_iter().rev();
 
     // Positive offset path
-    bez_path.extend(
-        pos_offset_coords
-            .into_iter()
-            .map(|c| kurbo::PathEl::LineTo(c.to_kurbo_point())),
-    );
+    if let Some(first_pos_offset_coord) = pos_offset_coords_iter.next() {
+        bez_path.push(kurbo::PathEl::MoveTo(
+            first_pos_offset_coord.to_kurbo_point(),
+        ));
 
-    // End cap
-    if end_width > 0.0 && end_pos_offset_coord != end_neg_offset_coord {
-        bez_path.curve_to(
-            (end_pos_offset_coord + end_dir_unit * end_width * (2.0 / 3.0)).to_kurbo_point(),
-            (end_neg_offset_coord + end_dir_unit * end_width * (2.0 / 3.0)).to_kurbo_point(),
-            end_neg_offset_coord.to_kurbo_point(),
+        bez_path.extend(
+            pos_offset_coords_iter
+                .into_iter()
+                .map(|c| kurbo::PathEl::LineTo(c.to_kurbo_point())),
         );
-    } else {
-        bez_path.line_to(end_neg_offset_coord.to_kurbo_point());
     }
 
-    // Negative offset path (needs to be reversed)
-    bez_path.extend(
-        neg_offset_coords
-            .into_iter()
-            .rev()
-            .map(|c| kurbo::PathEl::LineTo(c.to_kurbo_point())),
-    );
+    // Negative offset path (already reversed)
+    bez_path.extend(neg_offset_coords_iter.map(|c| kurbo::PathEl::LineTo(c.to_kurbo_point())));
+
     bez_path.close_path();
 
-    bez_path
+    // End cap
+    let end_cap = kurbo::Ellipse::new(
+        last_point.0.to_kurbo_point(),
+        kurbo::Vec2::new(end_arc_radius, end_arc_radius),
+        0.0,
+    );
+
+    // Draw
+    cx.fill(bez_path.clone(), &fill_brush);
+    cx.fill(start_cap, &fill_brush);
+    cx.fill(end_cap, &fill_brush);
+
+    // debugging
+    //draw_debug_path(cx, path_points);
+    //draw_debug_points(cx, path_points);
+    // outlines
+    //cx.stroke(bez_path.clone(), &piet::Color::RED, 0.2);
+}
+
+#[allow(unused)]
+fn draw_debug_points(cx: &mut impl piet::RenderContext, points: &[(na::Vector2<f64>, f64)]) {
+    let mut color = piet::Color::rgba(1.0, 1.0, 0.0, 1.0);
+    for (i, (point, _pressure)) in points.into_iter().enumerate() {
+        let stroke_brush = cx.solid_brush(piet::Color::RED);
+
+        cx.fill(kurbo::Circle::new(point.to_kurbo_point(), 0.5), &color);
+
+        // Shift the color so the point order becomes visible
+        let color_step = (2.0 * std::f64::consts::PI) / (8 as f64);
+        let rgb_offset = (2.0 / 3.0) * std::f64::consts::PI;
+        let color_offset = (5.0 / 4.0) * std::f64::consts::PI + 0.4;
+
+        color = piet::Color::rgba(
+            0.5 * (i as f64 * color_step + 0.0 * rgb_offset + color_offset).sin() + 0.5,
+            0.5 * (i as f64 * color_step + 1.0 * rgb_offset + color_offset).sin() + 0.5,
+            0.5 * (i as f64 * color_step + 2.0 * rgb_offset + color_offset).sin() + 0.5,
+            1.0,
+        )
+    }
+}
+
+#[allow(unused)]
+fn draw_debug_path(cx: &mut impl piet::RenderContext, points: &[(na::Vector2<f64>, f64)]) {
+    let mut points_iter = points
+        .into_iter()
+        .map(|p| kurbo::Point::new(p.0[0], p.0[1]));
+
+    if let Some(prev) = points_iter.next() {
+        let bez_path = kurbo::BezPath::from_iter(
+            std::iter::once(kurbo::PathEl::MoveTo(prev))
+                .chain(points_iter.map(|p| kurbo::PathEl::LineTo(p))),
+        );
+
+        cx.stroke(bez_path, &piet::Color::FUCHSIA, 1.0);
+    }
 }
