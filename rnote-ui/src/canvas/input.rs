@@ -20,7 +20,7 @@ pub(crate) fn handle_pointer_controller_event(
     let touch_drawing = canvas.touch_drawing();
     let event_type = event.event_type();
 
-    //super::input::debug_gdk_event(event);
+    super::input::debug_gdk_event(event);
 
     if reject_pointer_input(event, touch_drawing) {
         return (Inhibit(false), state);
@@ -37,7 +37,7 @@ pub(crate) fn handle_pointer_controller_event(
 
     match event_type {
         gdk::EventType::MotionNotify => {
-            //log::debug!("MotionNotify - modifiers: {modifiers:?}, is_stylus: {is_stylus}");
+            log::debug!("MotionNotify - modifiers: {modifiers:?}, is_stylus: {is_stylus}");
 
             if is_stylus {
                 handle_pen_event = true;
@@ -64,7 +64,7 @@ pub(crate) fn handle_pointer_controller_event(
             let button_event = event.downcast_ref::<gdk::ButtonEvent>().unwrap();
             let gdk_button = button_event.button();
 
-            //log::debug!("ButtonPress - button: {gdk_button}, is_stylus: {is_stylus}");
+            log::debug!("ButtonPress - button: {gdk_button}, is_stylus: {is_stylus}");
 
             if is_stylus {
                 if gdk_button == gdk::BUTTON_PRIMARY
@@ -96,7 +96,7 @@ pub(crate) fn handle_pointer_controller_event(
             let button_event = event.downcast_ref::<gdk::ButtonEvent>().unwrap();
             let gdk_button = button_event.button();
 
-            //log::debug!("ButtonRelease - button: {gdk_button}, is_stylus: {is_stylus}");
+            log::debug!("ButtonRelease - button: {gdk_button}, is_stylus: {is_stylus}");
 
             if is_stylus {
                 if gdk_button == gdk::BUTTON_PRIMARY
@@ -164,7 +164,7 @@ pub(crate) fn handle_pointer_controller_event(
         let pen_mode = retrieve_pen_mode(event);
 
         for (element, event_time) in elements {
-            //log::debug!("handle event, state: {state:?}, event_time_d: {:?}, modifier_keys: {modifier_keys:?}, pen_mode: {pen_mode:?}", now.duration_since(event_time));
+            log::debug!("handle event, state: {state:?}, pos: {:?}, event_time_d: {:?}, modifier_keys: {modifier_keys:?}, pen_mode: {pen_mode:?}", element.pos, now.duration_since(event_time));
 
             match state {
                 PenState::Up => {
@@ -257,7 +257,7 @@ fn debug_gdk_event(event: &gdk::Event) {
         .position()
         .map(|(x, y)| format!("x: {x:.1}, y: {y:.1}"));
     log::debug!(
-        "(pos: {:?}, modifier: {:?}, event_type: {:?}, tool type: {:?}, input source: {:?}",
+        "GDK Event - pos: {:?}, modifier: {:?}, event_type: {:?}, tool type: {:?}, input source: {:?}",
         pos,
         event.modifier_state(),
         event.event_type(),
